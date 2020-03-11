@@ -1,6 +1,6 @@
 ---
 title: "W20 Homework 6"
-author: "Kristi Gdanetz MacCready"
+author: "Akshaya Ravikumar"
 date: "2/26/2020"
 output: html_document
 ---
@@ -45,7 +45,7 @@ Clear your global environment again, we will not use this object in lab today.
 ### Sample data 
 Import sample data (all_data_indv.txt), filter for participants who consumed either of the potato starches:
 ```{r}
-samples_df <- read_delim("raw_data/all_data_indv.txt", 
+samples_df <- read_delim("raw_data/Lab8_data/all_data_indv.txt", 
                             delim = "\t", escape_double = FALSE, 
                             trim_ws = TRUE, 
                             col_types = cols(Sample_number = col_character(),
@@ -70,14 +70,15 @@ n_distinct(samples_df$participant_id) #201
 ### Diet data
 Import the dietary information from study participants, join with sample data imported in section above. The result contains the diet & sample data. Note that after the join we have the same number of participants in the resulting data frame.  
 ```{r}
-diet_df <- read_delim("raw_data/diet_data.txt", 
+diet_df <- read_delim("raw_data/Lab8_data/diet_data.txt", 
                             delim = "\t", escape_double = FALSE, 
                             trim_ws = TRUE) %>%
   # make all column names lower case
   rename_all(tolower) %>%
+  select(-semester, -study_week) %>%
   # use right join because we already filtered samples_df
-  right_join(samples_df, by = c("participant_id", "semester", "study_week"))
-dim(diet_df) #1166 rows, 23 cols
+  right_join(samples_df, by = c("participant_id"))
+dim(diet_df) #1171 rows, 22 cols
 n_distinct(diet_df$participant_id) #201
 ```
 
@@ -87,16 +88,45 @@ n_distinct(diet_df$participant_id) #201
 The analyses you will conduct in later sections of this assignment are going to ask for comparisons betwwen groups that require some biographical data (sex, ethnicity, diet, etc.).
 Import the lifestyle data file, format according to class conventions, review the data in each column, decide if any data curation should occur and complete that process. 
 ```{r}
-bio_df <- read_delim()
+bio_df <- read_delim("raw_data/Lab8_data/biographical.txt", 
+                            delim = "\t", escape_double = FALSE, 
+                            trim_ws = TRUE,
+                            col_types = cols(
+  Participant_ID = col_character(),
+  Semester = col_character(),
+  Use_Data = col_character(),
+  Sex = col_character(),
+  Age = col_double(),
+  Race_ethnicity = col_character(),
+  Weight_kg = col_double(),
+  Height_meters = col_double(),
+  BMI = col_double(),
+  antibiotic_past_year = col_character(),
+  antibiotic_date = col_character()
+)) %>%
+  
+rename_all(tolower)
+
+dim(bio_df)
+
+n_distinct(bio_df$participant_id)        
 # complete code here
 ```
 
 How many rows are in the resulting data frame?
+814 rows
 How many participants are in the resulting data frame?
+802 participants
 
 Join diet_df and bio_df data frames, name it bio_sam_df. What are the dimensions of the result?
 ```{r}
 # join code here
+
+bio_sam_df <- inner_join(diet_df, bio_df)
+
+dim(bio_sam_df)
+
+#1171 rows, 30 columns
 ```
 
 In the code chunk below conduct the following summary statistics, and write the results in an R markdown table, or several tables if easier. 
@@ -107,10 +137,58 @@ In the code chunk below conduct the following summary statistics, and write the 
 * number of participants who consumed antibiotics any time in the 3 months prior and up through the time of the study
 
 ```{r}
+# Sex and Supplement
+
+sexsupp_tab <- with(bio_sam_df, table(sex,supplement_consumed))
+
+sexsupp_tab
+
+bio_sam_df %>%
+  group_by(supplement_consumed, sex) %>%
+  summarise(Counts = n())
+
+# Race/ethnicity and Supplement
+
+bio_sam_df %>%
+  group_by(supplement_consumed, race_ethnicity) %>%
+  summarise(Counts = n())
+
+
+
+bio_sam_df %>%
+  group_by(sex) %>%
+  summarise(mean(fiber_g, na.rm = TRUE))
+
+bio_sam_df %>%
+  group_by(sex) %>%
+  summarise(sd(fiber_g, na.rm = TRUE))
+
+mean(bio_sam_df$fiber_g[bio_sam_df$sex == "Male"], na.rm = TRUE)
+
+
+bio_sam_df %>%
+  filter(antibiotic_date == "<=3 months ago") %>%
+    group_by(antibiotic_date) %>%
+    summarise(Counts = n())
+
+  
+
+
 
 ```
 
 <put table(s) here> 
+
+| | Male | Female| Total Participants |
+|:-----:|:-----:|:-----:|:-----:|
+| BRMPS | 354 | 633 | 987 |
+| LOODAT | 40 | 87 | 127| 
+
+##BRO FINISH THIS TABLE 
+| | 2+ ethnicities | Asian | Asian or PI | Black American | Black non-American | Caucasian/White | Latinx or Hispanic| MENA | Other | Prefer not to Say | Hawaiian or PI |
+|:-----:|:-----:|:-----:|:-----:|
+| BRMPS | 65 | 233 | 48 | 45 | 8 | 502 | 23| 46 | 16 | 6 | NA |
+| LOODAT | 16 | 40 | NA| | 7 | NA | 32 | NA | 24 | NA | NA | 8 |
 
 ### Question 2 [2 pts]
 
@@ -118,20 +196,86 @@ In the code chunk below conduct the following summary statistics, and write the 
 Imported the shared and taxonomy tables. Use these along with the bio_sam_df to create a phylseq object. 
 ```{r}
 # shared code
+
+shared_m <- read_delim("raw_data/Lab8_data/MMP_thruf19_filtered.shared",
+                            delim = "\t", escape_double = FALSE, 
+                            trim_ws = TRUE, na=c("NA"),
+                            col_types = list()) %>%
+  # separate Group column by underscores
+  separate(col = Group, 
+           into = c("participant_id", "sample_number", "seq_num"),
+           sep = "_", extra = "drop") %>%
+  # combine columns to make new sample id column 
+  mutate(sample_id = paste(participant_id, sample_number, sep = "_")) %>% 
+  # drop extra columns, reorder columns
+  select(sample_id, starts_with("Otu")) %>%
+  # drop control samples from sequencing
+  filter(str_detect(sample_id, "^U")) %>%
+  # remove duplicate sample ids
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  # sample IDs need to be made into row names
+  column_to_rownames(var = "sample_id") %>% 
+  # convert data frame to matrix object
+  as.matrix() %>% 
+  # convert to phyloseq object 
+  otu_table(., taxa_are_rows = FALSE) 
 ```
 
 ```{r}
 # taxonomy code
+
+taxa_m <- read_delim("raw_data/Lab8_data/MMP_thruf19.taxonomy",
+                            delim = "\t", escape_double = FALSE, 
+                            trim_ws = TRUE, na=c("NA")) %>%
+  # sequence variants (OTUs) need to be made into row names 
+  column_to_rownames(var = "ESV") %>% 
+  as.matrix() %>%
+  # convert to phyloseq object 
+  tax_table()  
+
 ```
 
 ```{r}
 # format bio_sam_df
-# combine all objects 
+bio_sam_df2 <- bio_sam_df %>%
+  mutate(race_ethnicity = recode(race_ethnicity, "Asian or Pacific Islander" = "Asian")) %>%
+  filter( race_ethnicity != "Other" & race_ethnicity != "Prefer not to say")
+
+table(bio_sam_df2$race_ethnicity)
+
+bio_sam_m <- bio_sam_df2 %>%
+  # make all column names lower case
+  rename_all(tolower) %>% 
+  # remove duplicate sample ids
+  distinct(., sample_id, .keep_all = TRUE) %>%  
+  # sample IDs need to be made into row names
+  column_to_rownames(var = "sample_id") %>% 
+  # specify type of phyloseq object
+  sample_data() 
+
+
+# combine all objects
+physq_obj <- phyloseq(shared_m, taxa_m, bio_sam_m) %>% 
+  # subset for consent and compliance
+  subset_samples(., use_data == "yes") %>%
+  subset_samples(., quantity_compliant != "no") %>%
+  # remove problematic semester(s)
+  subset_samples(., semester != "Winter2015") %>% 
+  # subset for weeks of interest
+  subset_samples(., study_week == "week1" | study_week == "week3") %>%
+  # subset for potato supplements 
+  subset_samples(., supplement_consumed == "BRMPS" | supplement_consumed == "LOODAT")
+
+physq_obj #view dimentions of new object 
+
 ```
 
-How many taxa are in the resulting object? 
+How many taxa are in the resulting object?
+7521 taxa
 How many samples are in the resulting object? 
+1019 samples
 How many sample variables are in the resulting object?
+29 sample variables 
 
 
 # Question 3 [4 pts]
@@ -139,47 +283,177 @@ How many sample variables are in the resulting object?
 In individuals who consumed either type of potato starch twice a day, does richness change consistently from week 1 to week 3 across each race/ethnicity? Save plot(s). 
 ```{r}
 # subset data 
+
+bio_sam2_df <- bio_sam_df2 %>%
+  distinct(., sample_id, .keep_all = TRUE) %>%
+   select(participant_id, sample_number, sample_id, study_week, 
+          semester, supplement_consumed, frequency, quantity_compliant, race_ethnicity) %>% #drop extra columns 
+
+  filter(semester != "Winter2015",
+         quantity_compliant != "no",
+         study_week == "week1" | study_week == "week3",
+         supplement_consumed == "BRMPS" | supplement_consumed == "LOODAT",
+         race_ethnicity != "Other" & race_ethnicity != "Prefer not to say" & race_ethnicity != "Black non-American" 
+         & race_ethnicity != "Hawaiian or Pacific Islander")
 ```
 
 ```{r}
 # calculate richness
+richness_df_2 <- physq_obj %>%
+  # calculate richness
+  estimate_richness(., split = TRUE,  measures = c("Observed")) %>% 
+  # make sample_id column before join 
+  rownames_to_column(var = "sample_id") %>% 
+  # join with sample data imported above
+  inner_join(bio_sam2_df, by = "sample_id") %>%  
+  rename(richness = Observed) %>%
+  # calculate average richness per person, per week 
+  group_by(participant_id, study_week, semester, 
+           frequency, race_ethnicity) %>%
+  filter(frequency == "2xdaily") %>%
+  summarise(avg_richness = round(mean(richness), digits = 0)) 
+
+richness_df_2
+dim(richness_df_2)
 ```
 
 ```{r}
 # plot(s)
+
+rich1 <- physq_obj %>%
+  plot_richness(., "study_week", measures = c("Observed")) +
+  facet_grid("race_ethnicity") +
+  ylab("Richness (Observed ESVs)") + xlab(NULL)
+rich1
+
+rich1$layers <- rich1$layers[-1] #drop geom_point 
+
+rich2 <- rich1 +   
+  geom_violin(aes(color = study_week)) + #add violin in color
+  geom_jitter(aes(color = study_week)) +  #add individual points in color 
+  theme(legend.position = "none")
+rich2
 ```
 
 ```{r}
+#check variances
+bartlett.test(avg_richness ~ race_ethnicity, data = richness_df_2 )
+
+#Sample Sizes
+
+richness_df_2 %>%
+  group_by(race_ethnicity) %>%
+  summarise(sample_size = n())
+
+
 # statistical test(s)
+
+re1 <- richness_df_2 %>%
+  filter(race_ethnicity == "2 or more ethnicities")
+  shapiro.test(re1$avg_richness) #p-value = 0.3093
+  
+re2 <- richness_df_2 %>%
+  filter(race_ethnicity == "Asian")
+  shapiro.test(re2$avg_richness) #p-value = 0.6344
+  
+re3 <- richness_df_2 %>%
+  filter(race_ethnicity == "Caucasian/white")
+  shapiro.test(re3$avg_richness) #p-value = 0.1925
+  
+re4 <- richness_df_2 %>%
+  filter(race_ethnicity == "Latinx or Hispanic")
+  shapiro.test(re4$avg_richness) #p-value = 0.4222
+  
+  #Shapiro test not run for groups without sufficient sample size (Black American,  MENA)
+  
+richness_df_3 <- richness_df_2 %>%
+  filter(race_ethnicity != "Black American" & race_ethnicity != "MENA")
+
+aov_re_results <- aov(avg_richness ~ race_ethnicity, data = richness_df_3)
+
+summary(aov_re_results)
 ```
 
-<write conclusions here> 
-
+As indicated by the low p-value of the ANOVA statistical test, there is a significan difference in richness across Asian, Caucasian/white, and Latinx or Hispanic ehtnic groups in the study. 
 
 # Question 4 [4 pts]
 
 Conduct an ordination using the Bray-Curtis index to determine if the communities of participants were different based on how recently they were prescribed antibiotics (<=3 mos. or >3 mos.). Do not include any data from when individuals consumed starch (week 3) in this analysis. 
 ```{r}
 # data formatting 
+physq_sub <- physq_obj %>% 
+  subset_samples(., antibiotic_date == "<=3 months ago" | antibiotic_date == "> 3 months ago") %>%
+  subset_samples(., study_week == "week1") %>%
+  prune_taxa(taxa_sums(.) > 1000, .) %>%
+  prune_samples(sample_sums(.) > 1000, .)
+
+# get read counts 
+sample_sum_df <- data.frame(sum = sample_sums(physq_sub))
+
+# Histogram of sample read counts
+ggplot(sample_sum_df, aes(x = sum)) + 
+  geom_histogram(color = "black", fill = "gray", binwidth = 2500) +
+  ggtitle("Distribution of sample sequencing depth") + 
+  xlab("Read counts") +
+  theme(axis.title.y = element_blank())
+
+# Summary statistics on read counts 
+min(sample_sums(physq_sub)) #2690
+mean(sample_sums(physq_sub)) #19400.92
+max(sample_sums(physq_sub))  #47278
+
+# scale samples to even depth using custom function
+physq_scale <- physq_sub %>%
+  scale_reads(round = "round") 
+
+#you want the stress to be less than 0.20
 ```
 
 ```{r}
 # reads coutns + subsample
+#see above
 ```
 
 ```{r}
 # ordination
+
+physq_bc_1 <- ordinate(physq_scale, 
+           method = "NMDS", 
+           k=3, maxit=500, try=50,
+           distance = "bray")
+physq_bc_1
 ```
 
 ```{r}
 # plot
+
+ordplot3 <- plot_ordination(physeq = physq_sub_2, 
+                     ordination = physq_bc_1, 
+                     type = "samples", 
+                     color = "antibiotic_date", 
+                     shape = "semester")
+print(ordplot3)
 ```
 
 ```{r}
 # statistical test 
+
+# calculate BC index, get distance matrix
+dat_bray_1 <- phyloseq::distance(physq_sub_2, method = "bray") 
+
+sampledf <- physq_sub_2 %>% 
+  sample_data(.) %>% #extract sample data from phyloseq object 
+  as(., "data.frame") #convert to data frame for adonis()
+
+# run test
+adn_res <- adonis(formula = dat_bray_1 ~ antibiotic_date, 
+                  data = sampledf)
+
+# view results 
+print(adn_res)
 ```
 
-<write conclusions here> 
+Since the R squared value is not close to one, there is not sufficient evidence to suggest dissimilarity between communities for individuals who consumed antibiotics within 3 months or greater than 3 months ago.
 
 
 # Question 5 [8 pts]
@@ -189,65 +463,221 @@ Is there a correlation between the abundance of Ruminococcus spp. and fiber in t
 ```{r}
 # data formatting 
 # Hint: Use psmelt() to convert the phyloseq object to long-format data frame, remove as much extra information from the data frame as possible. 
+physq_phyla <- physq_obj %>% 
+  # tax glom groups together taxa with the same name
+  tax_glom("Genus") %>%
+  # convert counts to relative abundance 
+  transform_sample_counts(function(x) {x/sum(x)} ) %>%
+  # convert phyloseq object (matrix) to data frame 
+  psmelt() %>%
+  # sort alphabetically 
+  arrange(Genus) %>%
+  # Calculate weekly mean of relative abundance
+  group_by(participant_id, study_week, semester, 
+           frequency, supplement_consumed, Genus, OTU, fiber_g) %>%
+  summarise(relative_abundance = mean(Abundance, na.rm = TRUE)) %>%
+  # remove low abundance taxa
+  filter(relative_abundance > 0.001) %>%
+  filter( Genus == "Ruminococcus")
+physq_phyla
 ```
 
 ```{r}
 # plot
+ physq_phyla %>%
+  drop_na() %>% 
+  filter(study_week == "week3" & fiber_g <= 150) %>%
+  ggplot(aes(x = fiber_g,
+             y = relative_abundance)) + 
+  geom_point() + #puts data points to match x and y coordinates
+  geom_smooth(method = "lm", #used to create a linear best fit line
+              se = FALSE) + #hides confidence interval around line 
+  xlab("fiber (g)") + 
+  ylab("Relative abundance") 
 ```
 
 ```{r}
 # statistical test
+
+rumin_fib_corr <- physq_phyla %>%
+  drop_na() %>% 
+  filter(study_week == "week3",
+         relative_abundance > 0.001,
+         fiber_g<= 150 ) %>%  
+  lm(fiber_g ~ relative_abundance, data = .) #test relationship
+summary(rumin_fib_corr) #view results 
 ```
 
 <write conclusions here> 
-
+Due to the high p-value, there is no correlation obsereved between relative abundance of Ruminococcus spp and fiber (g).
 
 Does Ruminococcus abundance significantly differ between any race/ethnicity?
 ```{r}
 # data formatting 
+physq_phyla2 <- physq_obj %>% 
+  # tax glom groups together taxa with the same name
+  tax_glom("Genus") %>%
+  # convert counts to relative abundance 
+  transform_sample_counts(function(x) {x/sum(x)} ) %>%
+  # convert phyloseq object (matrix) to data frame 
+  psmelt() %>%
+  # sort alphabetically 
+  arrange(Genus) %>%
+  # Calculate weekly mean of relative abundance
+  group_by(participant_id, study_week, semester, 
+           frequency, supplement_consumed, Genus, OTU, race_ethnicity) %>%
+  summarise(relative_abundance = mean(Abundance, na.rm = TRUE)) %>%
+  # remove low abundance taxa
+  filter(relative_abundance > 0.001) %>%
+  filter( Genus == "Ruminococcus")
+physq_phyla
 ```
 
 ```{r}
 # plot
+
+abundreplot <- physq_phyla2 %>%
+  filter(race_ethnicity != "Black non-American" & race_ethnicity != "Hawaiian or Pacific Islander") %>%
+  ggplot(aes(x = race_ethnicity,
+             y = relative_abundance ,
+             color = race_ethnicity)) +
+# geom_hline adds a horitzonal line which makes it easy to quickly see which supplements had a positive or negative influence on the concentration
+  geom_hline(yintercept = 0,
+             linetype = "dashed") + 
+  geom_violin() + #add violion plots over top the hline annotation
+  geom_jitter() + # add jitter points overtop of the violin 
+  xlab(NULL) + #hide x-axis label 
+  ylab("relative abundance") + 
+  theme(legend.position = "none", #hide legend, not adding anything we can't determine from axis labels
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) #rotate x-axis tick mark labels
+
+abundreplot
 ```
 
 ```{r}
 # statistical test
+bbb <- physq_phyla2 %>%
+  filter(race_ethnicity != "Black non-American" & race_ethnicity != "Hawaiian or Pacific Islander") %>%
+  drop_na()
+
+kruskal.test(race_ethnicity~ relative_abundance, bbb)
 ```
 
-<write conclusions here> 
+Due to the high p-value observed, there is no correlation between race/ethnicity and relative abundance of Rumiococcus.
 
 
 Is there a correlation between the abundance of Bifidobacterium faecale (Otu0023519) and fiber in the diet? 
 ```{r}
 # data formatting 
 # Hint: Use psmelt() to convert the phyloseq object to long-format data frame, remove as much extra information from the data frame as possible. 
+
+physq_phyla3 <- physq_obj %>% 
+  # tax glom groups together taxa with the same name
+  subset_taxa(Genus == "Bifidobacterium") %>%
+  # convert counts to relative abundance 
+  transform_sample_counts(function(x) {x/sum(x)} ) %>%
+  # convert phyloseq object (matrix) to data frame 
+  psmelt() %>%
+  # sort alphabetically 
+   arrange(Genus) %>%
+  # Calculate weekly mean of relative abundance
+  group_by(participant_id, study_week, semester, 
+           frequency, supplement_consumed, OTU, Genus, fiber_g) %>%
+  summarise(relative_abundance = mean(Abundance, na.rm = TRUE))
+  # remove low abundance taxa
+  
+
+physq_phyla3
 ```
 
 ```{r}
 # plot
+
+ physq_phyla5 <- physq_phyla3 %>%
+  filter(OTU == "Otu0023519") 
+physq_phyla5 %>%
+  drop_na() %>% 
+  filter(study_week == "week3" & fiber_g <= 150) %>%
+  ggplot(aes(x = fiber_g,
+             y = relative_abundance)) + 
+  geom_point() + #puts data points to match x and y coordinates
+  geom_smooth(method = "lm", #used to create a linear best fit line
+              se = FALSE) + #hides confidence interval around line 
+  xlab("fiber (g)") + 
+  ylab("Relative abundance") 
+
+physq_phyla5
 ```
 
 ```{r}
 # statistical test
+
+bifid_fib_corr <- physq_phyla5 %>%
+  drop_na() %>% 
+  filter(study_week == "week3",
+         fiber_g<= 150 ) %>%  
+  lm(fiber_g ~ relative_abundance, data = .) #test relationship
+summary(bifid_fib_corr) #view results 
 ```
 
-<write conclusions here> 
+Due to the low p-value, there is an apparent correlation between relative abundance bifidobacterium and fiber(g), however this is unclear based on the grpahical representation of the data. 
 
 Does Bifidobacterium faecale abundance significantly differ between any race/ethnicity?
 ```{r}
 # data formatting 
+
+physq_phyla4 <- physq_obj %>% 
+   subset_taxa(Genus == "Bifidobacterium") %>%
+  # convert counts to relative abundance 
+  transform_sample_counts(function(x) {x/sum(x)} ) %>%
+  # convert phyloseq object (matrix) to data frame 
+  psmelt() %>%
+  # sort alphabetically 
+   arrange(Genus) %>%
+  # Calculate weekly mean of relative abundance
+  group_by(participant_id, study_week, semester, 
+           frequency, supplement_consumed, OTU, Genus, race_ethnicity) %>%
+  summarise(relative_abundance = mean(Abundance, na.rm = TRUE))
+  # remove low abundance taxa
+
+physq_phyla4
 ```
 
 ```{r}
 # plot
+physq_phyla6 <- physq_phyla4 %>%
+  filter(race_ethnicity != "Black non-American" & race_ethnicity != "Hawaiian or Pacific Islander") %>%
+  filter(OTU == "Otu0023519")
+
+physq_phyla6 %>%
+  ggplot(aes(x = race_ethnicity,
+             y = relative_abundance ,
+             color = race_ethnicity)) +
+# geom_hline adds a horitzonal line which makes it easy to quickly see which supplements had a positive or negative influence on the concentration
+  geom_hline(yintercept = 0,
+             linetype = "dashed") + 
+  geom_violin() + #add violion plots over top the hline annotation
+  geom_jitter() + # add jitter points overtop of the violin 
+  xlab(NULL) + #hide x-axis label 
+  ylab("relative abundance") + 
+  theme(legend.position = "none", #hide legend, not adding anything we can't determine from axis labels
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) #rotate x-axis tick mark labels
+
+
 ```
 
 ```{r}
 # statistical test
+ccc <- physq_phyla6 %>%
+  filter(race_ethnicity != "Black non-American" & race_ethnicity != "Hawaiian or Pacific Islander") %>%
+  drop_na()
+
+bartlett.test(race_ethnicity ~ relative_abundance, data = ccc)
+
+kruskal.test(race_ethnicity ~ relative_abundance, ccc)
 ```
 
-<write conclusions here> 
+Error in running the statistical tests.
 
 
 -----
